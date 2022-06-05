@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: multipaper-master
+  labels:
+    app: multipaper-master
+spec:
+  serviceName: "multipaper-master"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: multipaper-master
+  template:
+    metadata:
+      labels:
+        app: multipaper-master
+    spec:
+      containers:
+      - name: multipaper-master
+        image: multipaper-master:latest
+        imagePullPolicy: Never
+        ports:
+          - containerPort: 25565
+            name: mc-ext-port
+          - containerPort: 35353
+            name: multipaper-port
+        volumeMounts:
+        - name: multipaper-master-pvc
+          mountPath: /master/server
+      initContainers:
+      - name: minecraft-server-bootstrap
+        image: minecraft-server-bootstrap
+        imagePullPolicy: Never
+        command: ["/bin/sh"]
+        args: ["-c", "cp -r /server/* /master/server/"]
+        volumeMounts:
+        - name: multipaper-master-pvc
+          mountPath: /master/server
+  volumeClaimTemplates:
+  - metadata:
+      name: multipaper-master-pvc
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "standard"
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: multipaper-worker
+  labels:
+    app: multipaper-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: multipaper-worker
+  template:
+    metadata:
+      labels:
+        app: multipaper-worker
+    spec:
+      containers:
+      - name: multipaper-worker
+        image: multipaper-worker:latest
+        imagePullPolicy: Never
+        ports:
+          - containerPort: 25565
+            name: mc-ext-port
+        command: ["/bin/bash"]
+        # args: ["-c", "sleep 100000"]
+        args: ["/worker/run.sh", "-DbungeecordName=$BUNGEECORD_NAME
+        -DmultipaperMasterAddress=$MULTIPAPER_MASTER_ADDRESS
+        -Dspigot.settings.bungeecord=true"]
+        env:
+        - name: BUNGEECORD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: MULTIPAPER_MASTER_ADDRESS
+          value: "multipaper-master-0.multipaper-master.default.svc.cluster.local:35353"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: multipaper-master
+spec:
+  selector:
+    app: multipaper-master
+  ports:
+    - name: mc-ext-port
+      protocol: TCP
+      port: 25565
+      targetPort: mc-ext-port
+    - name: multipaper-port
+      protocol: TCP
+      port: 35353
+      targetPort: multipaper-port
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: multipaper-worker
+spec:
+  selector:
+    app: multipaper-worker
+  ports:
+    - name: mc-ext-port
+      protocol: TCP
+      port: 25565
+      targetPort: mc-ext-port
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-external
+spec:
+  type: NodePort
+  selector:
+    app: multipaper-master
+  ports:
+    - name: mc-ext-port
+      protocol: TCP
+      port: 25565
+      targetPort: mc-ext-port
+      nodePort: 30000
